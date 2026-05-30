@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HMM 2008 Recession Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:      #0d1117;
+  --bg2:     #161b22;
+  --bg3:     #21262d;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #8b949e;
+  --accent:  #58a6ff;
+  --stable:  #3fb950;
+  --crisis:  #f85149;
+  --warn:    #d29922;
+  --smooth:  #bc8cff;
+  --nber-bg: rgba(248,81,73,0.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-width:1200px;padding:16px 20px 32px}
+
+/* ── header ── */
+.hdr{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:18px 24px;margin-bottom:16px}
+.hdr h1{font-size:1.5rem;color:var(--accent);margin-bottom:6px}
+.hdr p{color:var(--muted);font-size:.82rem;line-height:1.55;max-width:1100px}
+
+/* ── spec panel ── */
+.spec{display:grid;grid-template-columns:180px 1fr 1fr;gap:12px;margin-bottom:14px}
+.sbox{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.sbox h4{color:var(--accent);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+table.mat{border-collapse:collapse;font-family:Consolas,monospace;font-size:.75rem;width:100%}
+table.mat th,table.mat td{border:1px solid var(--border);padding:3px 7px;text-align:center}
+table.mat th{background:var(--bg3);color:var(--muted)}
+.formula{font-family:Consolas,monospace;font-size:.73rem;color:var(--muted);margin-top:6px;line-height:1.6}
+.pi-row{display:flex;gap:10px;font-family:Consolas,monospace;font-size:.8rem;margin-top:4px}
+.pi-cell{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 10px}
+.pi-label{color:var(--muted);font-size:.72rem}
+
+/* ── chart layout ── */
+.chart-row{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+.cbox{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.cbox h4{color:var(--muted);font-size:.76rem;margin-bottom:8px}
+.full-cbox{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px}
+.full-cbox h4{color:var(--muted);font-size:.76rem;margin-bottom:8px}
+.interp{font-size:.68rem;color:var(--warn);margin-top:3px}
+
+/* ── state diagram SVG ── */
+.hmm-box{display:flex;flex-direction:column;align-items:center;justify-content:center}
+.hmm-box h4{color:var(--muted);font-size:.76rem;margin-bottom:8px;align-self:flex-start}
+svg.hd{font-size:11px;font-family:'Segoe UI',sans-serif}
+
+/* ── crisis display bar ── */
+.crisis-display{display:flex;align-items:center;gap:20px;padding:12px 18px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:6px;margin-bottom:10px;
+  transition:background .3s}
+.crisis-display.alarmed{background:rgba(248,81,73,.18);border-color:var(--crisis)}
+.crisis-prob{font-size:2.8rem;font-weight:700;font-family:Consolas,monospace;min-width:110px}
+.crisis-prob.high{color:var(--crisis)}
+.crisis-prob.low{color:var(--stable)}
+.crisis-meta{flex:1;font-size:.8rem;line-height:1.7}
+.obs-chip{display:inline-block;background:var(--bg2);border:1px solid var(--border);
+  border-radius:4px;padding:2px 8px;font-family:Consolas,monospace;font-size:.78rem;margin-top:2px}
+.step-info{color:var(--muted);font-size:.78rem}
+
+/* ── controls ── */
+.ctrl{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:12px}
+.ctrl-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.ctrl-row:last-child{margin-bottom:0}
+.btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  padding:7px 15px;border-radius:5px;cursor:pointer;font-size:.85rem;transition:all .15s}
+.btn:hover{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.playing{background:var(--warn);color:#000;border-color:var(--warn)}
+.clabel{color:var(--muted);font-size:.78rem;white-space:nowrap}
+input[type=range]{accent-color:var(--accent);flex:1;max-width:160px}
+.algo-grp{display:flex;gap:14px}
+.algo-grp label{display:flex;align-items:center;gap:5px;cursor:pointer;font-size:.8rem;color:var(--text)}
+.algo-grp input{accent-color:var(--accent)}
+.algo-note{font-size:.7rem;color:var(--muted);margin-left:4px}
+.fwd-dot{color:var(--accent)}
+.smo-dot{color:var(--smooth)}
+.vit-dot{color:var(--stable)}
+
+/* ── legend ── */
+.legend{display:flex;gap:16px;margin-top:6px;flex-wrap:wrap}
+.li{display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--muted)}
+.lc{width:18px;height:3px;border-radius:2px}
+.lc.nber{background:rgba(248,81,73,.5);height:10px;border-radius:3px;opacity:.7}
+
+/* ── math trace ── */
+.mtrace{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.mtrace h4{color:var(--accent);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.mtrace pre{font-family:Consolas,'Courier New',monospace;font-size:.73rem;color:var(--text);
+  line-height:1.65;white-space:pre;overflow-x:auto;max-height:300px;overflow-y:auto}
+
+/* ── footnotes ── */
+.foot{font-size:.7rem;color:var(--muted);line-height:1.7;border-top:1px solid var(--border);padding-top:12px;margin-top:4px}
+.foot a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<div class="hdr">
+  <h1>Hidden Markov Model: Real-Time Detection of the 2008 Financial Crisis</h1>
+  <p>A 2-state HMM with manually specified parameters (A, B, π) infers the probability of an economic crisis state
+  from two observable time series: WTI crude oil prices and residential mortgage delinquency rates.
+  The <strong>Forward Algorithm</strong> updates the filtered posterior P(Crisis | O<sub>1:t</sub>) causally —
+  using only observations available up to time t.
+  Viterbi and Forward-Backward smoothing are computed over the full sequence and require future observations.
+  <strong>Data: FRED MCOILWTICO and DRSFRMACBS, Jan 2004–Dec 2010.</strong></p>
+</div>
+
+<!-- ── MODEL SPEC ── -->
+<div class="spec">
+  <!-- Initial distribution -->
+  <div class="sbox">
+    <h4>Initial Distribution π</h4>
+    <div class="pi-row">
+      <div><div class="pi-label">π₁ = P(S₁ at t=1)</div><div class="pi-cell" style="color:var(--stable)">0.85</div></div>
+      <div><div class="pi-label">π₂ = P(S₂ at t=1)</div><div class="pi-cell" style="color:var(--crisis)">0.15</div></div>
+    </div>
+    <div class="formula">S₁ = Stable &nbsp; S₂ = Crisis<br>
+    Prior: economy predominantly<br>stable entering 2004.</div>
+  </div>
+
+  <!-- Transition matrix A -->
+  <div class="sbox">
+    <h4>Transition Matrix A &nbsp;<span style="color:var(--muted);font-size:.68rem">a<sub>ij</sub> = P(S<sub>j</sub> at t+1 | S<sub>i</sub> at t)</span></h4>
+    <table class="mat">
+      <tr><th></th><th>→ Stable</th><th>→ Crisis</th></tr>
+      <tr><td style="color:var(--stable)">Stable</td><td>0.95</td><td>0.05</td></tr>
+      <tr><td style="color:var(--crisis)">Crisis</td><td>0.10</td><td>0.90</td></tr>
+    </table>
+    <div class="formula">Row-stochastic ✓ (each row sums to 1)<br>
+    a₁₂=0.05: Regimes are persistent.<br>a₂₁=0.10: Moderate monthly recovery rate.</div>
+  </div>
+
+  <!-- Emission matrix B -->
+  <div class="sbox">
+    <h4>Emission Matrix B &nbsp;<span style="color:var(--muted);font-size:.68rem">B[j][k] = P(O<sub>t</sub>=k | X<sub>t</sub>=S<sub>j</sub>)</span></h4>
+    <table class="mat">
+      <tr><th></th><th>Benign</th><th>Fin. Stress</th><th>Supply Shock</th><th>Dual Stress</th></tr>
+      <tr><td style="color:var(--stable)">Stable</td><td>0.50</td><td>0.15</td><td>0.25</td><td>0.10</td></tr>
+      <tr><td style="color:var(--crisis)">Crisis</td><td>0.10</td><td>0.30</td><td>0.10</td><td>0.50</td></tr>
+    </table>
+    <div class="formula">Row-stochastic ✓ &nbsp;Obs: 0=oil↓del↓ &nbsp;1=oil↓del↑<br>
+    2=oil↑del↓ &nbsp;3=oil↑del↑ (Dual Stress)</div>
+  </div>
+</div>
+
+<!-- ── TOP ROW: Oil chart + HMM state diagram ── -->
+<div class="chart-row">
+  <div class="cbox">
+    <h4>WTI Crude Oil Price (USD/barrel) &nbsp;<span style="color:var(--muted);font-size:.68rem">Source: FRED MCOILWTICO</span></h4>
+    <canvas id="oilChart" height="160"></canvas>
+    <div class="legend">
+      <div class="li"><div class="lc" style="background:#f0883e"></div>WTI (monthly avg)</div>
+      <div class="li"><div class="lc nber"></div>NBER Recession (Dec 2007 – Jun 2009)</div>
+    </div>
+  </div>
+  <div class="cbox hmm-box">
+    <h4>HMM State Diagram</h4>
+    <svg class="hd" id="hmmSvg" width="280" height="220" viewBox="0 0 280 220">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#8b949e"/>
+        </marker>
+        <marker id="arrS" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="var(--stable)"/>
+        </marker>
+        <marker id="arrC" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="var(--crisis)"/>
+        </marker>
+      </defs>
+      <!-- Stable state circle -->
+      <circle id="svgS" cx="75" cy="110" r="45" fill="rgba(63,185,80,.12)" stroke="var(--stable)" stroke-width="2"/>
+      <text x="75" y="105" text-anchor="middle" fill="var(--stable)" font-weight="bold" font-size="12">S₁</text>
+      <text x="75" y="121" text-anchor="middle" fill="var(--stable)" font-size="10">Stable</text>
+      <!-- Crisis state circle -->
+      <circle id="svgC" cx="205" cy="110" r="45" fill="rgba(248,81,73,.12)" stroke="var(--crisis)" stroke-width="2"/>
+      <text x="205" y="105" text-anchor="middle" fill="var(--crisis)" font-weight="bold" font-size="12">S₂</text>
+      <text x="205" y="121" text-anchor="middle" fill="var(--crisis)" font-size="10">Crisis</text>
+      <!-- Self-loop S1 -->
+      <path d="M50,68 C30,20 120,20 100,68" fill="none" stroke="var(--stable)" stroke-width="1.5" marker-end="url(#arrS)"/>
+      <text x="75" y="22" text-anchor="middle" fill="var(--stable)" font-size="11">a₁₁=0.95</text>
+      <!-- Self-loop S2 -->
+      <path d="M180,68 C160,20 250,20 230,68" fill="none" stroke="var(--crisis)" stroke-width="1.5" marker-end="url(#arrC)"/>
+      <text x="205" y="22" text-anchor="middle" fill="var(--crisis)" font-size="11">a₂₂=0.90</text>
+      <!-- S1→S2 -->
+      <path id="svgA12" d="M119,100 L161,100" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="140" y="93" text-anchor="middle" fill="#8b949e" font-size="10">a₁₂=0.05</text>
+      <!-- S2→S1 -->
+      <path id="svgA21" d="M161,120 L119,120" fill="none" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="140" y="135" text-anchor="middle" fill="#8b949e" font-size="10">a₂₁=0.10</text>
+      <!-- State probability bars -->
+      <text x="140" y="175" text-anchor="middle" fill="var(--muted)" font-size="10">γ(Stable)</text>
+      <rect x="50" y="182" width="80" height="8" rx="2" fill="var(--bg3)" stroke="var(--border)" stroke-width="0.5"/>
+      <rect id="barS" x="50" y="182" width="68" height="8" rx="2" fill="var(--stable)"/>
+      <text x="200" y="175" text-anchor="middle" fill="var(--muted)" font-size="10">γ(Crisis)</text>
+      <rect x="160" y="182" width="80" height="8" rx="2" fill="var(--bg3)" stroke="var(--border)" stroke-width="0.5"/>
+      <rect id="barC" x="160" y="182" width="12" height="8" rx="2" fill="var(--crisis)"/>
+      <!-- γ values -->
+      <text id="svgGS" x="90" y="205" text-anchor="middle" fill="var(--stable)" font-size="11" font-weight="bold">85.0%</text>
+      <text id="svgGC" x="200" y="205" text-anchor="middle" fill="var(--crisis)" font-size="11" font-weight="bold">15.0%</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ── Delinquency chart ── -->
+<div class="full-cbox">
+  <h4>Residential Mortgage Delinquency Rate (90+ days, %) &nbsp;<span style="color:var(--muted);font-size:.68rem">Source: FRED DRSFRMACBS (quarterly → monthly linear interpolation)</span></h4>
+  <canvas id="delChart" height="120"></canvas>
+  <div class="interp">⚠ Monthly values are linearly interpolated between quarterly observations (Q1/Q2/Q3/Q4 = Jan/Apr/Jul/Oct). Interpolated values are not raw data.</div>
+</div>
+
+<!-- ── Crisis probability chart ── -->
+<div class="full-cbox crisis-panel" id="crisisPanel">
+  <h4>P(Crisis | O<sub>1:t</sub>) — Filtered Posterior &nbsp;
+    <span style="color:var(--muted);font-size:.68rem">[Forward = causal real-time &nbsp;|&nbsp; Smoothed & Viterbi require full sequence]</span></h4>
+  <!-- State display -->
+  <div class="crisis-display" id="crisisBar">
+    <div class="crisis-prob low" id="crisisNum">15.0%</div>
+    <div class="crisis-meta">
+      <div><span style="color:var(--muted)">Step:</span> <span id="stepLabel">— (not started)</span></div>
+      <div><span style="color:var(--muted)">Observation symbol:</span> <span class="obs-chip" id="obsChip">—</span></div>
+      <div><span style="color:var(--muted)">Algorithm:</span> <span id="algoLabel" style="color:var(--accent)">Forward (causal)</span></div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:.72rem;color:var(--muted)">γ(Stable)</div>
+      <div id="stableNum" style="font-size:1.3rem;font-weight:700;color:var(--stable);font-family:Consolas">85.0%</div>
+    </div>
+  </div>
+  <canvas id="crisisChart" height="140"></canvas>
+  <div class="legend" style="margin-top:8px">
+    <div class="li"><div class="lc" style="background:var(--accent)"></div>Forward (causal)</div>
+    <div class="li"><div class="lc" style="background:var(--smooth)"></div>Smoothed / Forward-Backward</div>
+    <div class="li"><div class="lc" style="background:var(--stable);height:2px"></div>Viterbi path (step)</div>
+    <div class="li"><div class="lc nber"></div>NBER Recession</div>
+    <div class="li"><div class="lc" style="background:rgba(248,81,73,.5)"></div>Crisis threshold (0.5)</div>
+  </div>
+</div>
+
+<!-- ── CONTROLS ── -->
+<div class="ctrl">
+  <div class="ctrl-row">
+    <button class="btn" id="btnStart" title="Go to beginning">&#9664;&#9664; Start</button>
+    <button class="btn" id="btnBack" title="One step back">&#9664; Step</button>
+    <button class="btn" id="btnPlay" title="Play/Pause">&#9654; Play</button>
+    <button class="btn" id="btnEnd" title="Go to end">&#9654;&#9654; End</button>
+    <span class="clabel" style="margin-left:8px">Speed:</span>
+    <input type="range" id="speedSlider" min="50" max="1000" value="300" step="50">
+    <span class="clabel" id="speedLabel">300 ms/step</span>
+    <span class="clabel" style="margin-left:8px;color:var(--text)">Step <span id="stepCounter">0</span> / 82</span>
+  </div>
+  <div class="ctrl-row">
+    <span class="clabel">Algorithm:</span>
+    <div class="algo-grp">
+      <label><input type="radio" name="algo" value="forward" checked>
+        <span class="fwd-dot">&#9679;</span> Forward only
+        <span class="algo-note">(causal — real-time)</span></label>
+      <label><input type="radio" name="algo" value="smooth">
+        <span class="smo-dot">&#9679;</span> Smoothed / Forward-Backward
+        <span class="algo-note">(uses full sequence — NOT causal)</span></label>
+      <label><input type="radio" name="algo" value="viterbi">
+        <span class="vit-dot">&#9679;</span> Viterbi path
+        <span class="algo-note">(uses full sequence — NOT causal)</span></label>
+    </div>
+  </div>
+</div>
+
+<!-- ── MATH TRACE ── -->
+<div class="mtrace">
+  <h4>Forward Algorithm — Step-by-Step Computation</h4>
+  <pre id="traceBox">Press Play or step forward to begin the Forward Algorithm animation.</pre>
+</div>
+
+<!-- ── FOOTNOTES ── -->
+<div class="foot">
+  <strong>Data sources:</strong>
+  WTI crude oil: FRED series MCOILWTICO (monthly average, USD/barrel).
+  Mortgage delinquency: FRED series DRSFRMACBS (90+ days delinquent, residential mortgages, all commercial banks, quarterly).
+  NBER recession dates: December 2007 (peak) – June 2009 (trough).
+  Source: <a href="https://www.nber.org/research/data/us-business-cycle-expansions-and-contractions" target="_blank">NBER Business Cycle Dating</a>.
+  <br>
+  <strong>Model note:</strong> HMM parameters (π, A, B) are manually specified with economic justification.
+  This model was NOT estimated via Baum-Welch EM. The visualization demonstrates real-time
+  <em>detection</em> (filtering) — not ex-ante prediction. Language "predicts" is intentionally avoided.
+  Log-returns r<sub>t</sub> = ln(P<sub>t</sub>/P<sub>t-1</sub>) are used (not simple returns) because log-returns are time-additive
+  and consistent with continuous compounding.
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// DATA — actual values from FRED downloads
+// ============================================================
+
+// WTI Crude Oil monthly average price (USD/barrel)
+// Source: FRED MCOILWTICO  Period: Jan 2004 – Dec 2010 (index 0 = Jan 2004)
+const OIL = [
+  34.31,34.69,36.74,36.75,40.28,38.03,40.78,44.90,45.94,53.28,48.47,43.15, // 2004
+  46.84,48.15,54.19,52.98,49.83,56.35,59.00,64.99,65.59,62.26,58.32,59.41, // 2005
+  65.49,61.63,62.69,69.44,70.84,70.95,74.41,73.04,63.80,58.89,59.08,61.96, // 2006
+  54.51,59.28,60.44,63.98,63.46,67.49,74.12,72.36,79.92,85.80,94.77,91.69, // 2007
+  92.97,95.39,105.45,112.58,125.40,133.88,133.37,116.67,104.11,76.61,57.31,41.12, // 2008
+  41.71,39.09,47.94,49.65,59.03,69.64,64.15,71.05,69.41,75.72,77.99,74.47, // 2009
+  78.33,76.39,81.20,84.29,73.74,75.34,76.32,76.60,75.24,81.89,84.25,89.15  // 2010
+];
+
+// Mortgage delinquency rate (90+ days, %) — quarterly observations
+// Source: FRED DRSFRMACBS  Period: Q1 2004 – Q4 2010 (index 0 = Q1 2004 = Jan 1 2004)
+// Quarterly dates map to month indices: Q_i → month index 3*i (i=0..27)
+const DELINQ_Q = [
+  1.64,1.60,1.56,1.41,  // 2004 Q1-Q4
+  1.42,1.55,1.59,1.64,  // 2005
+  1.61,1.62,1.74,1.92,  // 2006
+  2.08,2.29,2.71,3.10,  // 2007
+  3.67,4.36,5.27,6.59,  // 2008
+  8.00,8.58,9.49,10.41, // 2009
+  11.48,11.08,10.66,10.33 // 2010
+];
+
+/**
+ * Linearly interpolate quarterly delinquency to monthly.
+ * Quarterly observations fall at months 0, 3, 6, 9, 12, ...
+ * For the two months following Q4 2010 (months 82-83), extrapolate
+ * using the Q3→Q4 2010 trend.
+ * @returns {number[]} 84 monthly values (Jan 2004 – Dec 2010)
+ */
+function interpolateDelinquency() {
+  const monthly = new Array(84);
+  for (let q = 0; q < 28; q++) {
+    const m = q * 3;
+    monthly[m] = DELINQ_Q[q];
+    if (q < 27) {
+      const delta = DELINQ_Q[q + 1] - DELINQ_Q[q];
+      monthly[m + 1] = DELINQ_Q[q] + delta / 3;
+      monthly[m + 2] = DELINQ_Q[q] + (2 * delta) / 3;
+    }
+  }
+  // Extrapolate Nov 2010 (month 82) and Dec 2010 (month 83)
+  // using trend from Q3 2010 (month 78) → Q4 2010 (month 81)
+  const trendPerMonth = (DELINQ_Q[27] - DELINQ_Q[26]) / 3;
+  monthly[82] = DELINQ_Q[27] + trendPerMonth;
+  monthly[83] = DELINQ_Q[27] + 2 * trendPerMonth;
+  return monthly;
+}
+
+const DELINQ = interpolateDelinquency();
+
+// ============================================================
+// TIME AXIS
+// Timeline: 84 months (Jan 2004 = 0 ... Dec 2010 = 83)
+// Observations: 83 steps (Feb 2004 = obs 0 ... Dec 2010 = obs 82)
+//   obs[t] uses OIL[t+1]/OIL[t] and DELINQ[t+1]-DELINQ[t]
+// Charts show obs indices 0..82 with labels Feb 2004 .. Dec 2010
+// ============================================================
+const T = 83; // number of observation time steps
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+/** Return "Mon YYYY" label for observation index t (0 = Feb 2004) */
+function obsLabel(t) {
+  const monthNum = (t + 1) % 12; // +1 because obs 0 = Feb = month index 1
+  const year = 2004 + Math.floor((t + 1) / 12);
+  return MONTHS[monthNum] + ' ' + year;
+}
+
+const LABELS = Array.from({length: T}, (_, t) => obsLabel(t));
+
+// ============================================================
+// HMM PARAMETERS
+// States: 0 = Stable (S₁), 1 = Crisis (S₂)
+// ============================================================
+const N = 2; // number of states
+const M = 4; // number of observation symbols
+
+// Initial distribution  π[j] = P(X_1 = S_j)
+// Economic justification: economy predominantly stable entering 2004
+const PI = [0.85, 0.15];
+
+// Transition matrix  A[i][j] = P(X_{t+1}=S_j | X_t=S_i)
+// Row-stochastic: A[0][0]+A[0][1] = 1, A[1][0]+A[1][1] = 1  ✓
+const A = [
+  [0.95, 0.05], // from Stable: 95% persist, 5% → Crisis
+  [0.10, 0.90]  // from Crisis: 10% recover, 90% persist
+];
+
+// Emission matrix  B[j][k] = P(O_t=k | X_t=S_j)
+// Obs symbols: 0=Benign, 1=FinStress, 2=SupplyShock, 3=DualStress
+// Row-stochastic: each row sums to 1  ✓
+const B = [
+  [0.50, 0.15, 0.25, 0.10], // Stable
+  [0.10, 0.30, 0.10, 0.50]  // Crisis
+];
+
+// Assert row-stochastic (checked at startup, see bottom of script)
+function assertStochastic() {
+  const eps = 1e-10;
+  console.assert(Math.abs(A[0][0]+A[0][1]-1)<eps,'A row 0 not stochastic');
+  console.assert(Math.abs(A[1][0]+A[1][1]-1)<eps,'A row 1 not stochastic');
+  console.assert(Math.abs(B[0].reduce((a,b)=>a+b,0)-1)<eps,'B row 0 not stochastic');
+  console.assert(Math.abs(B[1].reduce((a,b)=>a+b,0)-1)<eps,'B row 1 not stochastic');
+  console.assert(Math.abs(PI[0]+PI[1]-1)<eps,'PI not stochastic');
+}
+
+// ============================================================
+// OBSERVATION COMPUTATION
+// ============================================================
+const OBS_NAMES = ['Benign (oil↓ del↓)','Financial Stress (oil↓ del↑)',
+                   'Supply Shock (oil↑ del↓)','Dual Stress (oil↑ del↑) ⚠'];
+const OBS_SHORT = ['0 – Benign','1 – Fin. Stress','2 – Supply Shock','3 – Dual Stress ⚠'];
+
+/**
+ * Compute the discrete observation sequence.
+ * Log-return for oil: r_t = ln(P_t / P_{t-1})   [log-returns: additive over time,
+ *   consistent with continuous compounding — preferred over simple returns]
+ * Delinquency change: Δd_t = d_t - d_{t-1}
+ * Discretize into 4 joint symbols by sign of each variable.
+ * @returns {Object} {obs, oilRet, delChange}
+ */
+function computeObservations() {
+  const obs = new Int8Array(T);
+  const oilRet = new Float64Array(T);
+  const delChange = new Float64Array(T);
+  for (let t = 0; t < T; t++) {
+    const r = Math.log(OIL[t + 1] / OIL[t]); // log-return
+    const d = DELINQ[t + 1] - DELINQ[t];       // delinquency change
+    oilRet[t] = r;
+    delChange[t] = d;
+    // 0: oil↓ del↓ | 1: oil↓ del↑ | 2: oil↑ del↓ | 3: oil↑ del↑
+    obs[t] = (r > 0 ? 2 : 0) + (d > 0 ? 1 : 0);
+  }
+  return { obs, oilRet, delChange };
+}
+
+const { obs: OBS, oilRet: OIL_RET, delChange: DEL_CHG } = computeObservations();
+
+// ============================================================
+// FORWARD ALGORITHM
+// α_t(j) = P(O_1,...,O_t, X_t=S_j | λ)
+// γ_t(j) = α_t(j) / Σ_j α_t(j)   ← filtered posterior (prevents underflow)
+// γ_t(j) = P(X_t=S_j | O_{1:t}, λ)
+// ============================================================
+/**
+ * @returns {{gamma: number[][], unnorm: number[][]}}
+ *   gamma[t][j] = P(X_t=S_j | O_{1:t})   — the quantity shown in animation
+ *   unnorm[t][j] = un-normalized α_t(j) at each step (proportional, for math trace)
+ */
+function forwardAlgorithm() {
+  const gamma = [];
+  const unnorm = [];
+
+  // Initialization: t=0, α_1(j) = π_j · B[j][O_1]
+  const a0 = [PI[0] * B[0][OBS[0]], PI[1] * B[1][OBS[0]]];
+  const s0 = a0[0] + a0[1];
+  unnorm.push([...a0]);
+  gamma.push([a0[0] / s0, a0[1] / s0]);
+
+  // Recursion: α_t(j) = [Σ_i γ_{t-1}(i) · a_{ij}] · B[j][O_t]
+  // Using normalized γ_{t-1} instead of raw α_{t-1} prevents underflow;
+  // normalization of the result yields the same γ_t (global scale cancels).
+  for (let t = 1; t < T; t++) {
+    const at = new Array(N);
+    for (let j = 0; j < N; j++) {
+      let pred = 0;
+      for (let i = 0; i < N; i++) pred += gamma[t - 1][i] * A[i][j];
+      at[j] = pred * B[j][OBS[t]];
+    }
+    const st = at[0] + at[1];
+    unnorm.push([...at]);
+    gamma.push([at[0] / st, at[1] / st]);
+  }
+  return { gamma, unnorm };
+}
+
+// ============================================================
+// BACKWARD ALGORITHM
+// β_t(j) = P(O_{t+1},...,O_T | X_t=S_j, λ)
+// Initialization: β_T(j) = 1
+// Recursion: β_t(j) = Σ_k a_{jk} · B[k][O_{t+1}] · β_{t+1}(k)
+// Normalized to prevent underflow (scaling constant absorbed in smoothing step).
+// ============================================================
+function backwardAlgorithm() {
+  const betaN = new Array(T);
+  betaN[T - 1] = [0.5, 0.5]; // β_T(j)=1 normalized → [0.5,0.5]
+  for (let t = T - 2; t >= 0; t--) {
+    const b = new Array(N);
+    for (let i = 0; i < N; i++) {
+      let s = 0;
+      for (let k = 0; k < N; k++) s += A[i][k] * B[k][OBS[t + 1]] * betaN[t + 1][k];
+      b[i] = s;
+    }
+    const sb = b[0] + b[1];
+    betaN[t] = [b[0] / sb, b[1] / sb];
+  }
+  return betaN;
+}
+
+/**
+ * Smoothed posterior: γ_t(j) = P(X_t=S_j | O_{1:T}, λ)
+ * = [α_t(j)·β_t(j)] / Σ_j [α_t(j)·β_t(j)]
+ * Using independently normalized forward (gammaFwd) and backward (betaN):
+ * pointwise product then renormalize — scaling constants cancel.
+ */
+function smoothedProbabilities(gammaFwd, betaN) {
+  return gammaFwd.map((gRow, t) => {
+    const p = gRow.map((g, j) => g * betaN[t][j]);
+    const s = p[0] + p[1];
+    return [p[0] / s, p[1] / s];
+  });
+}
+
+// ============================================================
+// VITERBI ALGORITHM (log domain — avoids underflow)
+// δ_t(j) = max over all paths ending in S_j at t: log P(path, O_{1:t})
+// ψ_t(j) = argmax backpointer
+// log-domain: multiply→add, max stays max
+// ============================================================
+function viterbi() {
+  const logDelta = new Array(T);
+  const psi = new Array(T);
+
+  // Initialization
+  logDelta[0] = [
+    Math.log(PI[0]) + Math.log(B[0][OBS[0]]),
+    Math.log(PI[1]) + Math.log(B[1][OBS[0]])
+  ];
+  psi[0] = [0, 0];
+
+  // Recursion
+  for (let t = 1; t < T; t++) {
+    logDelta[t] = new Array(N);
+    psi[t] = new Array(N);
+    for (let j = 0; j < N; j++) {
+      let best = -Infinity, bestI = 0;
+      for (let i = 0; i < N; i++) {
+        const v = logDelta[t - 1][i] + Math.log(A[i][j]);
+        if (v > best) { best = v; bestI = i; }
+      }
+      logDelta[t][j] = best + Math.log(B[j][OBS[t]]);
+      psi[t][j] = bestI;
+    }
+  }
+
+  // Backtrack
+  const path = new Array(T);
+  path[T - 1] = logDelta[T - 1][0] >= logDelta[T - 1][1] ? 0 : 1;
+  for (let t = T - 2; t >= 0; t--) path[t] = psi[t + 1][path[t + 1]];
+  return path;
+}
+
+// ============================================================
+// PRE-COMPUTE ALL SEQUENCES
+// ============================================================
+assertStochastic();
+const { gamma: GAMMA_FWD, unnorm: UNNORM } = forwardAlgorithm();
+const BETA_N = backwardAlgorithm();
+const GAMMA_SMO = smoothedProbabilities(GAMMA_FWD, BETA_N);
+const VITERBI_PATH = viterbi();
+
+// NBER recession:
+// Peak: December 2007 = obs index 46 (month 47 in 0=Jan2004 array)
+// Trough: June 2009 = obs index 64 (month 65)
+// Source: https://www.nber.org/research/data/us-business-cycle-expansions-and-contractions
+const NBER_START = 46;
+const NBER_END   = 64;
+
+// ============================================================
+// CHART SETUP
+// ============================================================
+
+/** Custom plugin: draws NBER shading + vertical cursor on any Chart.js chart */
+function makeChartPlugin(getStep) {
+  return {
+    id: 'overlay',
+    beforeDraw(chart) {
+      const {ctx, chartArea: ca, scales: {x, y}} = chart;
+      if (!ca) return;
+      ctx.save();
+      // NBER recession shading
+      const x0 = x.getPixelForValue(NBER_START);
+      const x1 = x.getPixelForValue(NBER_END);
+      ctx.fillStyle = 'rgba(248,81,73,0.10)';
+      ctx.fillRect(x0, ca.top, x1 - x0, ca.bottom - ca.top);
+      // Crisis threshold line on crisis chart
+      if (chart.canvas.id === 'crisisChart') {
+        const yHalf = y.getPixelForValue(0.5);
+        ctx.strokeStyle = 'rgba(248,81,73,0.45)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(ca.left, yHalf); ctx.lineTo(ca.right, yHalf); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    },
+    afterDraw(chart) {
+      const {ctx, chartArea: ca, scales: {x}} = chart;
+      if (!ca) return;
+      const step = getStep();
+      if (step < 0) return;
+      const cx = x.getPixelForValue(step);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath(); ctx.moveTo(cx, ca.top); ctx.lineTo(cx, ca.bottom); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  };
+}
+
+let currentStep = -1;
+let algoMode = 'forward';
+let playing = false;
+let playTimer = null;
+let playSpeed = 300;
+
+const plugin = makeChartPlugin(() => currentStep);
+
+// ── Oil Chart ──
+const oilCtx = document.getElementById('oilChart').getContext('2d');
+const oilChart = new Chart(oilCtx, {
+  type: 'line',
+  data: {
+    labels: LABELS,
+    datasets: [{
+      label: 'WTI (USD/bbl)',
+      data: OIL.slice(1), // obs-aligned: Feb 2004 – Dec 2010
+      borderColor: '#f0883e',
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.3,
+      fill: false
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { color: '#8b949e', maxTicksLimit: 14, font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' },
+           title: { display: true, text: 'USD/bbl', color: '#8b949e', font: { size: 10 } } }
+    }
+  },
+  plugins: [plugin]
+});
+
+// ── Delinquency Chart ──
+const delCtx = document.getElementById('delChart').getContext('2d');
+const delChart = new Chart(delCtx, {
+  type: 'line',
+  data: {
+    labels: LABELS,
+    datasets: [{
+      label: 'Delinquency Rate (%)',
+      data: DELINQ.slice(1),
+      borderColor: '#d29922',
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.2,
+      fill: false
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { color: '#8b949e', maxTicksLimit: 14, font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' },
+           title: { display: true, text: '%', color: '#8b949e', font: { size: 10 } } }
+    }
+  },
+  plugins: [plugin]
+});
+
+// ── Crisis Chart ──
+const crisisCtx = document.getElementById('crisisChart').getContext('2d');
+
+// Viterbi: convert path to 0/1 probabilities for display
+const viterbiLine = VITERBI_PATH.map(s => s); // 0=Stable,1=Crisis, use as 0/1
+
+const crisisChart = new Chart(crisisCtx, {
+  type: 'line',
+  data: {
+    labels: LABELS,
+    datasets: [
+      {
+        label: 'Forward γ(Crisis)',
+        data: new Array(T).fill(null),
+        borderColor: '#58a6ff',
+        borderWidth: 2.5,
+        pointRadius: 0,
+        tension: 0.3,
+        fill: false
+      },
+      {
+        label: 'Smoothed γ(Crisis)',
+        data: GAMMA_SMO.map(g => g[1]),
+        borderColor: '#bc8cff',
+        borderWidth: 1.5,
+        borderDash: [5, 3],
+        pointRadius: 0,
+        tension: 0.3,
+        fill: false,
+        hidden: true
+      },
+      {
+        label: 'Viterbi state',
+        data: viterbiLine,
+        borderColor: '#3fb950',
+        borderWidth: 1.5,
+        borderDash: [2, 3],
+        pointRadius: 0,
+        stepped: true,
+        fill: false,
+        hidden: true
+      }
+    ]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { ticks: { color: '#8b949e', maxTicksLimit: 14, font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: {
+        min: 0, max: 1,
+        ticks: { color: '#8b949e', font: { size: 10 }, callback: v => (v * 100).toFixed(0) + '%' },
+        grid: { color: '#21262d' },
+        title: { display: true, text: 'P(Crisis | O₁:t)', color: '#8b949e', font: { size: 10 } }
+      }
+    }
+  },
+  plugins: [plugin]
+});
+
+// ============================================================
+// ANIMATION & STATE UPDATE
+// ============================================================
+
+/** Update all charts and UI elements for the given step */
+function updateDisplay(step) {
+  currentStep = step;
+
+  // Grow forward line up to current step
+  const fwdData = new Array(T).fill(null);
+  for (let i = 0; i <= step; i++) fwdData[i] = GAMMA_FWD[i][1];
+  crisisChart.data.datasets[0].data = fwdData;
+
+  // Update algorithm visibility
+  crisisChart.data.datasets[0].hidden = algoMode === 'viterbi';
+  crisisChart.data.datasets[1].hidden = algoMode !== 'smooth';
+  crisisChart.data.datasets[2].hidden = algoMode !== 'viterbi';
+
+  // Get displayed probability
+  let crisisProbDisplay;
+  if (algoMode === 'smooth') {
+    crisisProbDisplay = GAMMA_SMO[step][1];
+  } else if (algoMode === 'viterbi') {
+    crisisProbDisplay = VITERBI_PATH[step];
+  } else {
+    crisisProbDisplay = GAMMA_FWD[step][1];
+  }
+  const stableProb = 1 - crisisProbDisplay;
+
+  // UI: crisis probability number
+  const pct = (crisisProbDisplay * 100).toFixed(1) + '%';
+  const numEl = document.getElementById('crisisNum');
+  numEl.textContent = pct;
+  numEl.className = 'crisis-prob ' + (crisisProbDisplay > 0.5 ? 'high' : 'low');
+
+  document.getElementById('stableNum').textContent = (stableProb * 100).toFixed(1) + '%';
+  document.getElementById('stepLabel').textContent = LABELS[step] + ' (obs ' + step + ')';
+  document.getElementById('stepCounter').textContent = step;
+
+  const obsSymbol = OBS[step];
+  document.getElementById('obsChip').textContent = OBS_SHORT[obsSymbol];
+
+  const algNames = {forward: 'Forward (causal)', smooth: 'Smoothed / Forward-Backward', viterbi: 'Viterbi'};
+  document.getElementById('algoLabel').textContent = algNames[algoMode];
+
+  const isAlarmed = crisisProbDisplay > 0.5;
+  document.getElementById('crisisBar').className = 'crisis-display' + (isAlarmed ? ' alarmed' : '');
+
+  // SVG state diagram
+  const gc = GAMMA_FWD[step][1];
+  const gs = GAMMA_FWD[step][0];
+  document.getElementById('svgGC').textContent = (gc * 100).toFixed(1) + '%';
+  document.getElementById('svgGS').textContent = (gs * 100).toFixed(1) + '%';
+  document.getElementById('barC').setAttribute('width', (gc * 80).toFixed(1));
+  document.getElementById('barS').setAttribute('width', (gs * 80).toFixed(1));
+
+  // Highlight active state in SVG
+  document.getElementById('svgS').setAttribute('fill',
+    gs > 0.5 ? 'rgba(63,185,80,0.28)' : 'rgba(63,185,80,0.08)');
+  document.getElementById('svgC').setAttribute('fill',
+    gc > 0.5 ? 'rgba(248,81,73,0.28)' : 'rgba(248,81,73,0.08)');
+
+  // Math trace
+  updateMathTrace(step);
+
+  // Redraw charts
+  oilChart.update('none');
+  delChart.update('none');
+  crisisChart.update('none');
+}
+
+/** Generate the step-by-step forward computation text for the math trace panel */
+function updateMathTrace(t) {
+  const obs = OBS[t];
+  const r = OIL_RET[t];
+  const d = DEL_CHG[t];
+  const label = LABELS[t];
+  const oilCurr = OIL[t + 1].toFixed(2);
+  const oilPrev = OIL[t].toFixed(2);
+  const delCurr = DELINQ[t + 1].toFixed(3);
+  const delPrev = DELINQ[t].toFixed(3);
+
+  const rPct = (r * 100).toFixed(3);
+  const dFmt = d >= 0 ? '+' + d.toFixed(3) : d.toFixed(3);
+
+  let prevGS, prevGC;
+  if (t === 0) {
+    prevGS = PI[0]; prevGC = PI[1];
+  } else {
+    prevGS = GAMMA_FWD[t - 1][0]; prevGC = GAMMA_FWD[t - 1][1];
+  }
+
+  const unnS = UNNORM[t][0];
+  const unnC = UNNORM[t][1];
+  const sumUnn = unnS + unnC;
+  const gamS = GAMMA_FWD[t][0];
+  const gamC = GAMMA_FWD[t][1];
+
+  // Breakdown of forward computation for each state
+  const predS = prevGS * A[0][0] + prevGC * A[1][0];
+  const predC = prevGS * A[0][1] + prevGC * A[1][1];
+  const bS = B[0][obs];
+  const bC = B[1][obs];
+
+  const nberNote = (t >= NBER_START && t <= NBER_END)
+    ? '  ← NBER Recession period' : '';
+
+  const traceLines = [
+    '═══════════════════════════════════════════════════════════════════════════',
+    'Step t=' + t + ' │ ' + label + nberNote,
+    '═══════════════════════════════════════════════════════════════════════════',
+    '',
+    'OBSERVATION',
+    '  Oil price:        ' + oilPrev + ' → ' + oilCurr + ' USD/bbl',
+    '  Log-return:       r_t = ln(' + oilCurr + '/' + oilPrev + ') = ' + rPct + '%  → oil ' + (r > 0 ? '↑' : '↓'),
+    '  Delinquency rate: ' + delPrev + '% → ' + delCurr + '%  (linearly interpolated)',
+    '  Δ Delinquency:    Δd_t = ' + delCurr + ' − ' + delPrev + ' = ' + dFmt + '%  → del ' + (d > 0 ? '↑' : '↓'),
+    '  Obs symbol O_t  = ' + obs + '  (' + OBS_NAMES[obs] + ')',
+    '',
+    'FORWARD RECURSION',
+    t === 0
+      ? '  (Initialization: t=0)'
+      : '  Previous filtered posteriors:  γ_{t-1}(Stable) = ' + prevGS.toFixed(6) + '   γ_{t-1}(Crisis) = ' + prevGC.toFixed(6),
+    '',
+    '  α_t(Stable) = [Σ_i γ_{t-1}(i) · a_{i,Stable}] · B[Stable][' + obs + ']',
+    t === 0
+      ? '             = π(Stable) · B[Stable][' + obs + ']'
+      : '             = [γ_{t-1}(Stable)·a₁₁ + γ_{t-1}(Crisis)·a₂₁] · B[0][' + obs + ']',
+    t === 0
+      ? '             = ' + PI[0].toFixed(4) + ' · ' + bS.toFixed(2)
+      : '             = [' + prevGS.toFixed(6) + '·' + A[0][0] + ' + ' + prevGC.toFixed(6) + '·' + A[1][0] + '] · ' + bS.toFixed(2),
+    t === 0
+      ? '             = ' + unnS.toFixed(6)
+      : '             = [' + (prevGS * A[0][0]).toFixed(6) + ' + ' + (prevGC * A[1][0]).toFixed(6) + '] · ' + bS.toFixed(2),
+    t !== 0
+      ? '             = ' + predS.toFixed(6) + ' · ' + bS.toFixed(2) + ' = ' + unnS.toFixed(6)
+      : '',
+    '',
+    '  α_t(Crisis) = [Σ_i γ_{t-1}(i) · a_{i,Crisis}] · B[Crisis][' + obs + ']',
+    t === 0
+      ? '             = π(Crisis) · B[Crisis][' + obs + ']'
+      : '             = [γ_{t-1}(Stable)·a₁₂ + γ_{t-1}(Crisis)·a₂₂] · B[1][' + obs + ']',
+    t === 0
+      ? '             = ' + PI[1].toFixed(4) + ' · ' + bC.toFixed(2)
+      : '             = [' + prevGS.toFixed(6) + '·' + A[0][1] + ' + ' + prevGC.toFixed(6) + '·' + A[1][1] + '] · ' + bC.toFixed(2),
+    t === 0
+      ? '             = ' + unnC.toFixed(6)
+      : '             = [' + (prevGS * A[0][1]).toFixed(6) + ' + ' + (prevGC * A[1][1]).toFixed(6) + '] · ' + bC.toFixed(2),
+    t !== 0
+      ? '             = ' + predC.toFixed(6) + ' · ' + bC.toFixed(2) + ' = ' + unnC.toFixed(6)
+      : '',
+    '',
+    'NORMALIZATION  (→ filtered posterior γ_t)',
+    '  Sum = ' + unnS.toFixed(6) + ' + ' + unnC.toFixed(6) + ' = ' + sumUnn.toFixed(6),
+    '  γ_t(Stable) = ' + unnS.toFixed(6) + ' / ' + sumUnn.toFixed(6) + ' = ' + gamS.toFixed(6) + '  (' + (gamS * 100).toFixed(2) + '%)',
+    '  γ_t(Crisis) = ' + unnC.toFixed(6) + ' / ' + sumUnn.toFixed(6) + ' = ' + gamC.toFixed(6) + '  (' + (gamC * 100).toFixed(2) + '%)',
+    '',
+    '  Interpretation: P(X_t = Crisis | O_{1:' + (t + 1) + '}, λ) = ' + (gamC * 100).toFixed(2) + '%',
+    gamC > 0.5 ? '  ▶ CRISIS SIGNAL (γ > 50%)' : '  ▶ Stable regime more likely'
+  ].filter(l => l !== '');
+
+  document.getElementById('traceBox').textContent = traceLines.join('\n');
+}
+
+// ============================================================
+// PLAYBACK CONTROLS
+// ============================================================
+function startPlay() {
+  if (playing) return;
+  playing = true;
+  document.getElementById('btnPlay').textContent = '⏸ Pause';
+  document.getElementById('btnPlay').classList.add('playing');
+  function tick() {
+    if (!playing) return;
+    const next = currentStep + 1;
+    if (next >= T) { stopPlay(); return; }
+    updateDisplay(next);
+    playTimer = setTimeout(tick, playSpeed);
+  }
+  playTimer = setTimeout(tick, playSpeed);
+}
+
+function stopPlay() {
+  playing = false;
+  clearTimeout(playTimer);
+  document.getElementById('btnPlay').textContent = '▶ Play';
+  document.getElementById('btnPlay').classList.remove('playing');
+}
+
+document.getElementById('btnPlay').addEventListener('click', () => {
+  if (playing) stopPlay(); else { if (currentStep >= T - 1) updateDisplay(0); startPlay(); }
+});
+document.getElementById('btnStart').addEventListener('click', () => { stopPlay(); updateDisplay(0); });
+document.getElementById('btnEnd').addEventListener('click', () => { stopPlay(); updateDisplay(T - 1); });
+document.getElementById('btnBack').addEventListener('click', () => {
+  stopPlay();
+  if (currentStep > 0) updateDisplay(currentStep - 1);
+  else updateDisplay(0);
+});
+
+document.getElementById('speedSlider').addEventListener('input', function() {
+  // Invert: slider max=1000 should mean SLOW, slider min=50 should mean FAST
+  playSpeed = parseInt(this.value);
+  document.getElementById('speedLabel').textContent = playSpeed + ' ms/step';
+});
+
+document.querySelectorAll('input[name="algo"]').forEach(el => {
+  el.addEventListener('change', function() {
+    algoMode = this.value;
+    if (currentStep >= 0) updateDisplay(currentStep);
+  });
+});
+
+// ============================================================
+// INITIALIZE
+// ============================================================
+updateDisplay(0);
+</script>
+</body>
+</html>
